@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0c0a09">
+    <title>Piratensender · Broadcast</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell broadcaster-shell">
+      <section class="hero">
+        <div class="signal"><span class="signal-dot"></span><span id="status-label">Offline</span></div>
+        <div class="brand">
+          <img class="brand-mark" src="/brand-mark.png" alt="">
+          <span class="brand-sep">·</span>
+          <span class="brand-name">PIRATENSENDER</span>
+        </div>
+        
+        <h1>Create station.</h1>
+      </section>
+
+      <section class="player-card form-card">
+        <label for="channel-name">Station</label>
+        <input id="channel-name" type="text" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="piratensender">
+        <p class="hint">Use a short station name; listeners join instantly.</p>
+
+        <label for="audio-device">Audio interface</label>
+        <select id="audio-device"><option value="">Allow access to load devices</option></select>
+        <button id="permission-button" class="secondary" type="button">Allow audio access / refresh</button>
+
+        <label for="quality">Quality</label>
+        <select id="quality">
+          <option value="256">High · 256k</option>
+          <option value="96">Weak wifi · 96k</option>
+        </select>
+
+        <div class="meter" aria-label="Input level"><span id="meter-fill"></span></div>
+        <div class="facts">
+          <span>48 kHz</span><span>Stereo Opus</span><span>Processing off</span>
+        </div>
+
+        <button id="broadcast-button" class="primary" type="button" disabled>Start broadcast</button>
+        <p id="message" class="message" role="status">Connect the mixer, then allow audio access.</p>
+      </section>
+    </main>
+    <script type="module" src="/broadcast.js"></script>
+  </body>
+</html>

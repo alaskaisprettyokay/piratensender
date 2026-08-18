@@ -1,0 +1,28 @@
+{
+  "name": "piratensender",
+  "version": "0.1.0",
+  "description": "Local-first party radio node for venue networks and controlled hosted demos.",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alaskaisprettyokay/piratensender.git"
+  },
+  "keywords": [
+    "radio",
+    "webrtc",
+    "local-first",
+    "mediamtx",
+    "event-radio"
+  ],
+  "scripts": {
+    "check": "node --check server.mjs && node --check levels.mjs && node --check web/common.js && node --check web/listener.js && node --check web/broadcast.js && node --check test/smoke.mjs",
+    "start": "./start.sh",
+    "stop": "./stop.sh",
+    "status": "./status.sh",
+    "test:smoke": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}

@@ -1,0 +1,36 @@
+logLevel: info
+logDestinations: [stdout]
+
+api: true
+apiAddress: 127.0.0.1:9997
+
+rtsp: true
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+
+rtmp: true
+rtmpAddress: :1935
+hls: false
+srt: false
+moq: false
+
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: false
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: :443
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: true
+webrtcAdditionalHosts: ["__LAN_IP__"]
+
+paths:
+  # Default station for the public demo.
+  # Station names are unique: a second publisher on a live station is
+  # rejected. Handover = the current DJ stops, the next one goes live.
+  piratensender:
+    source: publisher
+    overridePublisher: false
+  # Any other path becomes a station on first publish (multi-DJ setups).
+  all_others:
+    source: publisher
+    overridePublisher: false

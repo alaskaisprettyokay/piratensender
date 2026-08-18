@@ -1,0 +1,6 @@
+.runtime/
+.env.local-node
+auto.crt
+auto.key
+
+node_modules/

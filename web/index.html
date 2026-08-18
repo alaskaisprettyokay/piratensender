@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0c0a09">
+    <title>Piratensender</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero" aria-labelledby="title">
+        <div class="signal"><span class="signal-dot"></span><span id="status-label">Local signal</span></div>
+        <div class="brand">
+          <img class="brand-mark" src="/brand-mark.png" alt="">
+          <span class="brand-sep">·</span>
+          <span class="brand-name">PIRATENSENDER</span>
+        </div>
+        <h1 id="title">Piratensender Live</h1>
+      </section>
+
+      <section class="player-card">
+        <div class="art" aria-hidden="true"><div class="rings"></div><span>LIVE</span></div>
+        <div class="now-playing">
+          <p class="meta">Piratensender · live broadcast</p>
+          <p class="track">Open station</p>
+        </div>
+        <div id="channel-list" class="channel-list" role="group" aria-label="Live channels"></div>
+        <button id="listen-button" class="primary" type="button">Listen live</button>
+        <div class="volume-row">
+          <label for="volume">Volume</label>
+          <input id="volume" type="range" min="0" max="2" step="0.01" value="1">
+        </div>
+        <p id="message" class="message" role="status">Tap once to connect.</p>
+        <audio id="audio" playsinline></audio>
+      </section>
+
+      <footer>
+        <span>Live app for local-first radio.</span>
+        <a id="broadcast-link" href="/broadcast">Create station →</a>
+      </footer>
+    </main>
+    <script type="module" src="/listener.js"></script>
+  </body>
+</html>

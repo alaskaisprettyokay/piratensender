@@ -2,15 +2,19 @@ import http from 'node:http';
 import https from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import { mkdir, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('./web/', import.meta.url));
+const runtimeRoot = fileURLToPath(new URL('./.runtime/', import.meta.url));
 const port = Number(process.env.PORT || 8090);
 const tlsPort = Number(process.env.TLS_PORT || 8443);
 const lanIp = process.env.LAN_IP;
 const mediamtxBase = 'http://127.0.0.1:8889';
 const mediamtxApi = 'http://127.0.0.1:9997';
+const hlsProcesses = new Map();
 const allowRemoteBroadcast = ['1', 'true', 'yes'].includes(
   String(process.env.PIRATENSENDER_ALLOW_REMOTE_BROADCAST || '').toLowerCase(),
 );
@@ -25,6 +29,8 @@ const mimeTypes = {
   '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.m3u8': 'application/vnd.apple.mpegurl',
+  '.ts': 'video/mp2t',
 };
 
 function isLoopback(address = '') {
@@ -60,6 +66,96 @@ function sendJson(response, status, value) {
     'Cache-Control': 'no-store',
   });
   response.end(JSON.stringify(value));
+}
+
+function validChannelName(channel) {
+  return /^[a-z0-9_-]{1,32}$/.test(channel);
+}
+
+async function sleep(ms) {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForFile(path, timeoutMs = 5000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      return await readFile(path);
+    } catch {
+      await sleep(150);
+    }
+  }
+  return readFile(path);
+}
+
+async function ensureHlsTranscoder(channel) {
+  if (hlsProcesses.has(channel)) return;
+
+  const outputDir = join(runtimeRoot, 'hls', channel);
+  await rm(outputDir, { recursive: true, force: true });
+  await mkdir(outputDir, { recursive: true });
+
+  const args = [
+    '-nostdin',
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-rtsp_transport', 'tcp',
+    '-i', `rtsp://127.0.0.1:8554/${channel}`,
+    '-vn',
+    '-ac', '2',
+    '-ar', '48000',
+    '-c:a', 'aac',
+    '-b:a', '160k',
+    '-f', 'hls',
+    '-hls_time', '1',
+    '-hls_list_size', '6',
+    '-hls_flags', 'delete_segments+omit_endlist',
+    '-hls_segment_filename', join(outputDir, 'segment-%05d.ts'),
+    join(outputDir, 'index.m3u8'),
+  ];
+  const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  hlsProcesses.set(channel, child);
+  child.stderr.on('data', (chunk) => {
+    console.error(`[hls:${channel}] ${chunk.toString().trim()}`);
+  });
+  child.on('exit', () => {
+    if (hlsProcesses.get(channel) === child) hlsProcesses.delete(channel);
+  });
+}
+
+async function serveHls(request, response, url) {
+  if (!['GET', 'HEAD'].includes(request.method)) {
+    response.writeHead(405);
+    response.end();
+    return;
+  }
+
+  const match = url.pathname.match(/^\/hls\/([^/]+)\/([^/]+)$/);
+  const channel = match ? decodeURIComponent(match[1]) : '';
+  const file = match ? decodeURIComponent(match[2]) : '';
+  if (!validChannelName(channel) || !/^(index\.m3u8|segment-\d+\.ts)$/.test(file)) {
+    response.writeHead(404);
+    response.end();
+    return;
+  }
+
+  await ensureHlsTranscoder(channel);
+  const filePath = join(runtimeRoot, 'hls', channel, file);
+  try {
+    const body = file === 'index.m3u8' ? await waitForFile(filePath) : await readFile(filePath);
+    response.writeHead(200, {
+      'Content-Type': mimeTypes[extname(file)] || 'application/octet-stream',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    if (request.method === 'HEAD') response.end();
+    else response.end(body);
+  } catch {
+    response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end('HLS stream is not ready yet.');
+  }
 }
 
 // Proxy WHIP/WHEP signaling to MediaMTX so every page is same-origin
@@ -115,6 +211,11 @@ const server = async (request, response) => {
 
   if (url.pathname.startsWith('/mtx/')) {
     await proxyMediamtx(request, response, url);
+    return;
+  }
+
+  if (url.pathname.startsWith('/hls/')) {
+    await serveHls(request, response, url);
     return;
   }
 
@@ -209,6 +310,7 @@ if (process.env.TLS_CERT && process.env.TLS_KEY) {
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
+    for (const child of hlsProcesses.values()) child.kill('SIGTERM');
     for (const active of servers) active.close();
     process.exit(0);
   });

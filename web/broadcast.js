@@ -4,6 +4,7 @@ const channelInput = document.querySelector('#channel-name');
 const deviceSelect = document.querySelector('#audio-device');
 const qualitySelect = document.querySelector('#quality');
 const permissionButton = document.querySelector('#permission-button');
+const tabCaptureButton = document.querySelector('#tab-capture-button');
 const broadcastButton = document.querySelector('#broadcast-button');
 const message = document.querySelector('#message');
 const statusLabel = document.querySelector('#status-label');
@@ -22,6 +23,7 @@ function setState(state, detail) {
   message.textContent = detail;
   broadcastButton.textContent = state === 'live' ? 'Stop' : state === 'connecting' ? 'Starting…' : 'Go live';
   broadcastButton.disabled = state === 'connecting' || (state !== 'live' && !deviceSelect.value);
+  tabCaptureButton.disabled = state === 'connecting' || state === 'live' || !navigator.mediaDevices?.getDisplayMedia;
   deviceSelect.disabled = state === 'live' || state === 'connecting';
   permissionButton.disabled = state === 'live' || state === 'connecting';
   channelInput.disabled = state === 'live' || state === 'connecting';
@@ -86,8 +88,49 @@ async function stop() {
   setState('idle', 'Broadcast stopped.');
 }
 
-async function start() {
-  setState('connecting', 'Opening the mixer and relay…');
+async function captureDeviceAudio() {
+  return navigator.mediaDevices.getUserMedia({
+    video: false,
+    audio: {
+      deviceId: { exact: deviceSelect.value },
+      channelCount: { ideal: 2 },
+      sampleRate: { ideal: 48000 },
+      sampleSize: { ideal: 24 },
+      latency: { ideal: 0 },
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      voiceIsolation: false,
+    },
+  });
+}
+
+async function captureTabAudio() {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error('Browser tab capture is not supported here. Use Chrome or pick an audio interface.');
+  }
+  const capture = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: {
+      channelCount: { ideal: 2 },
+      sampleRate: { ideal: 48000 },
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      suppressLocalAudioPlayback: false,
+    },
+  });
+  const audioTrack = capture.getAudioTracks()[0];
+  if (!audioTrack) {
+    capture.getTracks().forEach((track) => track.stop());
+    throw new Error('No tab audio was shared. Pick a Chrome tab and enable share tab audio.');
+  }
+  capture.getVideoTracks().forEach((track) => track.stop());
+  return new MediaStream([audioTrack]);
+}
+
+async function start(source = 'device') {
+  setState('connecting', source === 'tab' ? 'Choose the browser tab and share audio…' : 'Opening the mixer and relay…');
   try {
     const config = await loadConfig();
 
@@ -104,20 +147,7 @@ async function start() {
       }
     } catch { /* if the check fails, MediaMTX still rejects duplicates */ }
 
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: false,
-      audio: {
-        deviceId: { exact: deviceSelect.value },
-        channelCount: { ideal: 2 },
-        sampleRate: { ideal: 48000 },
-        sampleSize: { ideal: 24 },
-        latency: { ideal: 0 },
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-        voiceIsolation: false,
-      },
-    });
+    mediaStream = source === 'tab' ? await captureTabAudio() : await captureDeviceAudio();
 
     const pc = new RTCPeerConnection();
     peerConnection = pc;
@@ -147,6 +177,7 @@ async function start() {
 
 permissionButton.addEventListener('click', () => { void refreshDevices(true); });
 deviceSelect.addEventListener('change', () => setState('idle', 'Ready to publish the selected input.'));
+tabCaptureButton.addEventListener('click', () => { void start('tab'); });
 broadcastButton.addEventListener('click', () => {
   if (peerConnection) void stop();
   else void start();

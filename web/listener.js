@@ -5,14 +5,21 @@ const audio = document.querySelector('#audio');
 const message = document.querySelector('#message');
 const statusLabel = document.querySelector('#status-label');
 const volume = document.querySelector('#volume');
+const BrowserAudioContext = window.AudioContext || window.webkitAudioContext;
+const mobileAudio = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const nativeHlsAudio = mobileAudio && Boolean(
+  audio.canPlayType('application/vnd.apple.mpegurl') || audio.canPlayType('audio/mpegurl'),
+);
 
 let peerConnection = null;
 let sessionUrl = null;
 let retryTimer = null;
 let stoppedByUser = false;
+let listenerMode = null;
 let channel = new URLSearchParams(location.search).get('ch') || null;
 let audioContext = null;
 let gainNode = null;
+let playbackStream = null;
 
 function setState(state, detail) {
   document.body.dataset.state = state;
@@ -22,8 +29,25 @@ function setState(state, detail) {
   button.disabled = state === 'connecting';
 }
 
+async function unlockAudio() {
+  if (!BrowserAudioContext) return;
+  audioContext = audioContext || new BrowserAudioContext();
+  await audioContext.resume().catch(() => undefined);
+}
+
+function armPlayback() {
+  playbackStream = playbackStream || new MediaStream();
+  audio.srcObject = playbackStream;
+  audio.muted = false;
+  audio.volume = Math.min(1, Number(volume.value));
+  audio.setAttribute('playsinline', '');
+  audio.autoplay = true;
+  void audio.play().catch(() => undefined);
+}
+
 async function disconnect(userInitiated = true) {
   stoppedByUser = userInitiated;
+  listenerMode = null;
   window.clearTimeout(retryTimer);
   retryTimer = null;
   await deleteWebRtcSession(sessionUrl);
@@ -32,43 +56,83 @@ async function disconnect(userInitiated = true) {
   peerConnection = null;
   gainNode?.disconnect();
   gainNode = null;
+  playbackStream = null;
   audio.srcObject = null;
+  audio.removeAttribute('src');
+  audio.load();
   if (userInitiated) setState('idle', 'Tap once to connect.');
+}
+
+async function selectLiveChannel(config) {
+  if (channel) return channel;
+  try {
+    const listResponse = await fetch('/channels', { cache: 'no-store' });
+    const live = ((await listResponse.json()).channels || []).filter((c) => c.ready);
+    if (live.length > 0 && !live.some((c) => c.name === config.streamName)) {
+      channel = live[0].name;
+      renderChannels(live);
+    }
+  } catch { /* fall through to the default channel */ }
+  return channel || config.streamName;
+}
+
+async function connectNativeHls(targetChannel) {
+  listenerMode = 'hls';
+  audio.srcObject = null;
+  audio.src = `/hls/${encodeURIComponent(targetChannel)}/index.m3u8`;
+  audio.muted = false;
+  audio.volume = Math.min(1, Number(volume.value));
+  audio.setAttribute('playsinline', '');
+  audio.autoplay = true;
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: `${targetChannel} live`,
+      artist: 'Piratensender',
+      album: 'Live broadcast',
+    });
+  }
+  await audio.play();
+  setState('live', 'Connected with iPhone background playback.');
 }
 
 async function connect() {
   stoppedByUser = false;
   setState('connecting', 'Joining the room signal…');
   try {
+    await unlockAudio();
+    armPlayback();
     const config = await loadConfig();
-    // No explicit channel chosen: prefer the default, but if it's idle and
-    // something else is live, follow the music instead of erroring.
-    if (!channel) {
-      try {
-        const listResponse = await fetch('/channels', { cache: 'no-store' });
-        const live = ((await listResponse.json()).channels || []).filter((c) => c.ready);
-        if (live.length > 0 && !live.some((c) => c.name === config.streamName)) {
-          channel = live[0].name;
-          renderedChannels = '';
-          renderChannels(live);
-        }
-      } catch { /* fall through to the default channel */ }
+    const targetChannel = await selectLiveChannel(config);
+    if (nativeHlsAudio) {
+      await connectNativeHls(targetChannel);
+      return;
     }
     const pc = new RTCPeerConnection();
     peerConnection = pc;
     const transceiver = pc.addTransceiver('audio', { direction: 'recvonly' });
     preferOpus(transceiver);
 
-    pc.addEventListener('track', (event) => {
+    pc.addEventListener('track', async (event) => {
       const stream = event.streams[0] || new MediaStream([event.track]);
+      playbackStream = playbackStream || new MediaStream();
+      for (const track of playbackStream.getAudioTracks()) playbackStream.removeTrack(track);
+      for (const track of stream.getAudioTracks()) playbackStream.addTrack(track);
+      audio.srcObject = playbackStream;
+      audio.volume = Math.min(1, Number(volume.value));
+      if (mobileAudio) {
+        audio.muted = false;
+        void audio.play().catch(() => undefined);
+        return;
+      }
       // Real gain stage: media-element volume is ignored on iOS, and a
       // GainNode gives boost headroom above 100% for quiet streams.
       // The muted element still drives the WebRTC stream; audio reaches
       // the speakers only through the gain graph.
-      audio.srcObject = stream;
       audio.muted = true;
+      void audio.play().catch(() => undefined);
       try {
-        audioContext = audioContext || new AudioContext();
+        await unlockAudio();
+        gainNode?.disconnect();
         void audioContext.resume();
         const source = audioContext.createMediaStreamSource(stream);
         gainNode = audioContext.createGain();
@@ -76,6 +140,7 @@ async function connect() {
         source.connect(gainNode).connect(audioContext.destination);
       } catch {
         audio.muted = false; // no WebAudio: fall back to plain playback
+        void audio.play().catch(() => undefined);
       }
       // Leave the jitter buffer adaptive by default — forcing it small causes
       // audible speed hunting on spiky wifi. ?buffer=0.05 opts into low
@@ -103,8 +168,8 @@ async function connect() {
       }
     });
 
-    sessionUrl = await createWebRtcSession(`/mtx/${encodeURIComponent(channel || config.streamName)}/whep`, pc);
-    await audio.play();
+    sessionUrl = await createWebRtcSession(`/mtx/${encodeURIComponent(targetChannel)}/whep`, pc);
+    void audio.play().catch(() => undefined);
   } catch (error) {
     await disconnect(false);
     setState('waiting', error instanceof Error ? error.message : 'Waiting for the broadcast…');
@@ -113,7 +178,7 @@ async function connect() {
 }
 
 button.addEventListener('click', () => {
-  if (peerConnection) void disconnect(true);
+  if (peerConnection || listenerMode) void disconnect(true);
   else void connect();
 });
 
@@ -145,7 +210,7 @@ function renderChannels(channels) {
       count.className = 'count';
       bar.append(fill, label, count);
       bar.addEventListener('click', () => {
-        if (channel === c.name && peerConnection) return;
+        if (channel === c.name && (peerConnection || listenerMode)) return;
         channel = c.name;
         renderChannels(live);
         void disconnect(false).then(connect);
@@ -173,6 +238,15 @@ volume.addEventListener('input', () => {
   const value = Number(volume.value);
   if (gainNode) gainNode.gain.value = value;
   else audio.volume = Math.min(1, value);
+});
+audio.addEventListener('ended', () => {
+  if (listenerMode === 'hls' && !stoppedByUser) {
+    setState('waiting', 'Signal interrupted. Reconnecting…');
+    window.clearTimeout(retryTimer);
+    retryTimer = window.setTimeout(() => {
+      void disconnect(false).then(connect);
+    }, 1500);
+  }
 });
 window.addEventListener('beforeunload', () => { void deleteWebRtcSession(sessionUrl); });
 
